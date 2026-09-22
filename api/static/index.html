@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yggdrasil — Contrôle d'accès</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* Palette inspirée des cloisons d'un vaisseau : acier clair, marquages sombres */
+  :root {
+    --coque:   #E4E8EC;   /* fond */
+    --panneau: #F7F8FA;   /* blocs */
+    --encre:   #1C2733;   /* texte */
+    --gris:    #5F6B78;   /* texte secondaire */
+    --trait:   #B8C1CB;   /* bordures */
+    --ok:      #2F8F5B;   /* accès autorisé */
+    --ko:      #C23B32;   /* accès refusé */
+    --accent:  #2A5DA8;   /* actions */
+    --titre: "Barlow Condensed", "Arial Narrow", sans-serif;
+    --texte: "Barlow", "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--coque); color: var(--encre); font: 16px/1.5 var(--texte); }
+  main { max-width: 1200px; margin: 0 auto; padding: 24px 20px 48px; }
+
+  header { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
+  h1 { font: 700 2.4rem/1 var(--titre); margin: 0; letter-spacing: .02em; }
+  h2 { font: 700 1.4rem/1.2 var(--titre); margin: 0 0 12px; }
+  .liaison { color: var(--gris); font-size: .95rem; }
+  .liaison::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; background: var(--ko); }
+  .liaison.active::before { background: var(--ok); }
+
+  /* ---- Les portes : l'élément central de la page ---- */
+  .portes { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 32px; }
+  .porte {
+    background: var(--panneau); border: 6px solid var(--trait); border-radius: 22px 22px 6px 6px;
+    padding: 18px; min-height: 190px; display: flex; flex-direction: column;
+    transition: border-color .2s, background-color .2s;
+  }
+  .porte .numero { font: 700 3.2rem/1 var(--titre); color: var(--trait); transition: color .2s; }
+  .porte .nom { font: 700 1.3rem/1.2 var(--titre); margin-top: 6px; }
+  .porte .zone { color: var(--gris); font-size: .95rem; }
+  .porte .niveau { margin-top: auto; display: flex; gap: 6px; align-items: center; font-size: .9rem; color: var(--gris); }
+  .pip { width: 12px; height: 12px; border: 2px solid var(--encre); border-radius: 2px; }
+  .pip.plein { background: var(--encre); }
+  .porte .message { min-height: 1.5em; font-weight: 600; margin-top: 8px; }
+  .porte.ouverte { border-color: var(--ok); background: #E7F3EC; }
+  .porte.ouverte .numero, .porte.ouverte .message { color: var(--ok); }
+  .porte.refusee { border-color: var(--ko); background: #F8E6E4; }
+  .porte.refusee .numero, .porte.refusee .message { color: var(--ko); }
+
+  /* ---- Colonnes ---- */
+  .colonnes { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 32px; }
+  @media (max-width: 800px) { .colonnes { grid-template-columns: 1fr; } }
+  .bloc { background: var(--panneau); border: 1px solid var(--trait); border-radius: 6px; padding: 18px; }
+  .bloc + .bloc { margin-top: 16px; }
+
+  .flux { list-style: none; margin: 0; padding: 0; max-height: 420px; overflow-y: auto; }
+  .flux li { display: grid; grid-template-columns: 70px 1fr; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--coque); }
+  .flux .heure { color: var(--gris); font-variant-numeric: tabular-nums; }
+  .flux .ok { color: var(--ok); font-weight: 600; }
+  .flux .ko { color: var(--ko); font-weight: 600; }
+  .vide { color: var(--gris); }
+
+  label { display: block; font-weight: 600; font-size: .95rem; margin: 10px 0 4px; }
+  input, select { width: 100%; padding: 9px 10px; font: inherit; border: 1px solid var(--trait); border-radius: 4px; background: #fff; }
+  .ligne { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  button { margin-top: 14px; padding: 10px 16px; font: 600 1rem var(--texte); color: #fff; background: var(--accent); border: 0; border-radius: 4px; cursor: pointer; }
+  button.secondaire { background: transparent; color: var(--accent); border: 1px solid var(--accent); margin: 0; padding: 5px 10px; font-size: .9rem; }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .nouvelle-carte { border-color: var(--accent); box-shadow: 0 0 0 3px #2A5DA833; }
+  .retour { min-height: 1.5em; margin-top: 8px; font-size: .95rem; }
+
+  table { width: 100%; border-collapse: collapse; }
+  .tableau { overflow-x: auto; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--coque); }
+  th { font: 700 1.05rem var(--titre); color: var(--gris); }
+  td.uid { font-variant-numeric: tabular-nums; letter-spacing: .05em; }
+  .inactive { color: var(--ko); }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Yggdrasil — contrôle d'accès</h1>
+    <span id="liaison" class="liaison">Liaison avec le serveur de bord…</span>
+  </header>
+
+  <section class="portes" id="portes" aria-label="Portes du vaisseau"></section>
+
+  <div class="colonnes">
+    <section class="bloc">
+      <h2>Derniers passages</h2>
+      <ul class="flux" id="flux"><li class="vide">Aucun passage pour l'instant. Passez un badge sur le lecteur.</li></ul>
+    </section>
+
+    <div>
+      <section class="bloc">
+        <h2>Simuler un passage</h2>
+        <label for="sim-carte">Carte</label>
+        <select id="sim-carte"></select>
+        <label for="sim-porte">Porte</label>
+        <select id="sim-porte"></select>
+        <button id="btn-simuler">Passer le badge</button>
+      </section>
+
+      <section class="bloc" id="bloc-carte">
+        <h2>Ajouter une carte</h2>
+        <label for="carte-uid">UID de la carte</label>
+        <input id="carte-uid" placeholder="Passez une carte inconnue sur le lecteur">
+        <div class="ligne">
+          <div>
+            <label for="carte-user">Titulaire</label>
+            <select id="carte-user"></select>
+          </div>
+          <div>
+            <label for="carte-niveau">Niveau</label>
+            <select id="carte-niveau">
+              <option value="1">1 — Équipage</option>
+              <option value="2">2 — Officier</option>
+              <option value="3">3 — Commandement</option>
+            </select>
+          </div>
+        </div>
+        <button id="btn-carte">Ajouter la carte</button>
+        <p class="retour" id="retour-carte"></p>
+      </section>
+
+      <section class="bloc">
+        <h2>Ajouter un membre d'équipage</h2>
+        <div class="ligne">
+          <div><label for="user-prenom">Prénom</label><input id="user-prenom"></div>
+          <div><label for="user-nom">Nom</label><input id="user-nom"></div>
+        </div>
+        <button id="btn-user">Ajouter le membre</button>
+        <p class="retour" id="retour-user"></p>
+      </section>
+    </div>
+  </div>
+
+  <section class="bloc">
+    <h2>Cartes enregistrées</h2>
+    <div class="tableau">
+      <table>
+        <thead><tr><th>UID</th><th>Titulaire</th><th>Niveau</th><th>Statut</th><th></th></tr></thead>
+        <tbody id="cartes"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script>
+// Traduction des motifs de refus renvoyés par l'API
+const MOTIFS = {
+  carte_inconnue: "Carte inconnue",
+  carte_inactive: "Carte désactivée",
+  niveau_insuffisant: "Niveau insuffisant",
+};
+
+const $ = (id) => document.getElementById(id);
+
+// Évite d'injecter du HTML venant de la base (sécurité)
+function esc(texte) {
+  const div = document.createElement("div");
+  div.textContent = texte ?? "";
+  return div.innerHTML;
+}
+
+// Appel à l'API avec gestion des erreurs
+async function api(url, options = {}) {
+  const rep = await fetch(url, { headers: { "Content-Type": "application/json" }, ...options });
+  const data = await rep.json().catch(() => ({}));
+  if (!rep.ok) throw new Error(data.detail || "Erreur du serveur");
+  return data;
+}
+
+// ---------------- Affichage ----------------
+function afficherPortes(portes) {
+  $("portes").innerHTML = portes.map((p) => {
+    const pips = [1, 2, 3].map((n) => `<span class="pip ${n <= p.niveau_autorisation_requis ? "plein" : ""}"></span>`).join("");
+    return `
+      <article class="porte" id="porte-${p.id}">
+        <span class="numero">${String(p.id).padStart(2, "0")}</span>
+        <span class="nom">${esc(p.nom)}</span>
+        <span class="zone">${esc(p.zone)}</span>
+        <p class="message" aria-live="polite"></p>
+        <span class="niveau">Niveau requis ${pips}</span>
+      </article>`;
+  }).join("");
+
+  $("sim-porte").innerHTML = portes.map((p) => `<option value="${p.id}">${esc(p.nom)}</option>`).join("");
+}
+
+function afficherCartes(cartes) {
+  $("cartes").innerHTML = cartes.length
+    ? cartes.map((c) => `
+      <tr>
+        <td class="uid">${esc(c.uid)}</td>
+        <td>${esc(c.prenom)} ${esc(c.nom)}</td>
+        <td>${c.niveau}</td>
+        <td class="${c.statut === "active" ? "" : "inactive"}">${c.statut === "active" ? "Active" : "Désactivée"}</td>
+        <td><button class="secondaire" onclick="basculerCarte('${esc(c.uid)}', '${c.statut}')">
+          ${c.statut === "active" ? "Désactiver" : "Réactiver"}</button></td>
+      </tr>`).join("")
+    : `<tr><td colspan="5" class="vide">Aucune carte. Passez un badge sur le lecteur pour l'enregistrer.</td></tr>`;
+
+  $("sim-carte").innerHTML =
+    cartes.map((c) => `<option value="${esc(c.uid)}">${esc(c.prenom)} ${esc(c.nom)} (niv. ${c.niveau})</option>`).join("") +
+    `<option value="FFFFFFFF">Carte inconnue (test)</option>`;
+}
+
+function afficherUsers(users) {
+  $("carte-user").innerHTML = users.map((u) => `<option value="${u.id}">${esc(u.prenom)} ${esc(u.nom)}</option>`).join("");
+}
+
+function ajouterAuFlux(ev) {
+  const liste = $("flux");
+  liste.querySelector(".vide")?.remove();
+  const qui = ev.nom ? `${esc(ev.prenom)} ${esc(ev.nom)}` : `Carte ${esc(ev.uid)}`;
+  const resultat = ev.autorise
+    ? `<span class="ok">Entré</span>`
+    : `<span class="ko">${MOTIFS[ev.motif] || "Refusé"}</span>`;
+  const li = document.createElement("li");
+  li.innerHTML = `<span class="heure">${ev.heure}</span><span>${qui} — ${esc(ev.porte)} : ${resultat}</span>`;
+  liste.prepend(li);
+}
+
+// La porte passe au vert ou au rouge pendant 3 secondes
+function animerPorte(ev) {
+  const porte = $(`porte-${ev.porte_id}`);
+  if (!porte) return;
+  porte.classList.remove("ouverte", "refusee");
+  porte.classList.add(ev.autorise ? "ouverte" : "refusee");
+  porte.querySelector(".message").textContent = ev.autorise
+    ? `Bienvenue ${ev.prenom} ${ev.nom}`
+    : MOTIFS[ev.motif] || "Accès refusé";
+  clearTimeout(porte.minuteur);
+  porte.minuteur = setTimeout(() => {
+    porte.classList.remove("ouverte", "refusee");
+    porte.querySelector(".message").textContent = "";
+  }, 3000);
+}
+
+// Une carte inconnue a été scannée : on prépare son enregistrement
+function proposerNouvelleCarte(uid) {
+  $("carte-uid").value = uid;
+  $("bloc-carte").classList.add("nouvelle-carte");
+  $("retour-carte").textContent = "Nouvelle carte détectée : choisissez son titulaire et son niveau.";
+}
+
+// ---------------- Chargement des données ----------------
+async function charger() {
+  const [portes, cartes, users, historique] = await Promise.all([
+    api("/api/portes"), api("/api/cartes"), api("/api/users"), api("/api/historique"),
+  ]);
+  afficherPortes(portes);
+  afficherCartes(cartes);
+  afficherUsers(users);
+  historique.slice().reverse().forEach(ajouterAuFlux);
+}
+
+async function rechargerCartes() {
+  afficherCartes(await api("/api/cartes"));
+}
+
+// ---------------- Temps réel ----------------
+function connecter() {
+  const ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen = () => { $("liaison").textContent = "Serveur de bord connecté"; $("liaison").classList.add("active"); };
+  ws.onclose = () => {
+    $("liaison").textContent = "Serveur de bord injoignable, nouvelle tentative…";
+    $("liaison").classList.remove("active");
+    setTimeout(connecter, 2000);
+  };
+  ws.onmessage = (message) => {
+    const ev = JSON.parse(message.data);
+    ajouterAuFlux(ev);
+    animerPorte(ev);
+    if (ev.motif === "carte_inconnue") proposerNouvelleCarte(ev.uid);
+  };
+}
+
+// ---------------- Actions ----------------
+$("btn-simuler").onclick = async () => {
+  await api("/api/scan", {
+    method: "POST",
+    body: JSON.stringify({ uid: $("sim-carte").value, porte_id: Number($("sim-porte").value) }),
+  });
+  // Le résultat arrive par le WebSocket, comme pour un vrai badge
+};
+
+$("btn-carte").onclick = async () => {
+  try {
+    await api("/api/cartes", {
+      method: "POST",
+      body: JSON.stringify({
+        uid: $("carte-uid").value.trim(),
+        niveau: Number($("carte-niveau").value),
+        id_user: Number($("carte-user").value),
+      }),
+    });
+    $("retour-carte").textContent = "Carte ajoutée.";
+    $("carte-uid").value = "";
+    $("bloc-carte").classList.remove("nouvelle-carte");
+    rechargerCartes();
+  } catch (e) {
+    $("retour-carte").textContent = e.message;
+  }
+};
+
+$("btn-user").onclick = async () => {
+  const prenom = $("user-prenom").value.trim();
+  const nom = $("user-nom").value.trim();
+  if (!prenom || !nom) { $("retour-user").textContent = "Renseignez le prénom et le nom."; return; }
+  await api("/api/users", { method: "POST", body: JSON.stringify({ nom, prenom }) });
+  $("retour-user").textContent = `${prenom} ${nom} ajouté à l'équipage.`;
+  $("user-prenom").value = ""; $("user-nom").value = "";
+  afficherUsers(await api("/api/users"));
+};
+
+async function basculerCarte(uid, statut) {
+  await api(`/api/cartes/${uid}`, {
+    method: "PATCH",
+    body: JSON.stringify({ statut: statut === "active" ? "inactive" : "active" }),
+  });
+  rechargerCartes();
+}
+
+charger();
+connecter();
+</script>
+</body>
+</html>
