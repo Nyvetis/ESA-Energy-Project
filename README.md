@@ -34,3 +34,5 @@ L'utilisateur présente sa carte RFID devant le lecteur :
 ### Autres schémas/images du projet
 <img width="1795" height="1348" alt="Flowchart Whiteboard in Grey Lilac Blue Simple and Minimal Style(1)" src="https://github.com/user-attachments/assets/96986020-169b-4b46-86fb-56819e9b44a8" />
 <img width="2606" height="3908" alt="Flowchart Whiteboard in Grey Lilac Blue Simple and Minimal Style" src="https://github.com/user-attachments/assets/d5d37ce6-dea7-4e3c-a09a-560ae4071a56" />
+
+<img width="8905" height="2597" alt="Flowchart Whiteboard in Grey Lilac Blue Simple and Minimal Style(2)" src="https://github.com/user-attachments/assets/b47af0b1-b4ef-4575-bb7a-b02abd2e82f1" />
