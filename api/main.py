@@ -9,6 +9,7 @@ from pathlib import Path
 import mysql.connector
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from db import ecrire, lire
@@ -41,6 +42,7 @@ historique: list[dict] = []
 class Scan(BaseModel):
     uid: str
     porte_id: int
+    cible: str | None = None
 
 
 class NouvelUtilisateur(BaseModel):
@@ -64,21 +66,31 @@ class StatutCarte(BaseModel):
 @app.post("/api/scan")
 async def scan(data: Scan):
     uid = data.uid.strip().upper()
+    lieu = data.cible.strip() if data.cible else None
 
     porte = lire("SELECT * FROM porte WHERE id = %s", (data.porte_id,), une_ligne=True)
     if porte is None:
         raise HTTPException(404, "Porte inconnue")
 
     carte = lire(
-        """SELECT c.uid, c.niveau, c.statut, u.nom, u.prenom
+        """SELECT c.uid, c.niveau, c.statut, c.id_user, u.nom, u.prenom
            FROM carte c JOIN `user` u ON u.id = c.id_user
            WHERE c.uid = %s""",
         (uid,),
         une_ligne=True,
     )
 
-    # Les 3 vérifications, dans l'ordre
-    if carte is None:
+    # Une salle de niveau 0 reste accessible sans carte.
+    if porte["niveau_autorisation_requis"] == 0:
+        reponse = {
+            "autorise": True,
+            "nom": carte["nom"] if carte else None,
+            "prenom": carte["prenom"] if carte else None,
+            "niveau": carte["niveau"] if carte else 0,
+            "porte": lieu or porte["nom"],
+        }
+    # Les vérifications des zones sécurisées, dans l'ordre.
+    elif carte is None:
         reponse = {"autorise": False, "motif": "carte_inconnue"}
     elif carte["statut"] != "active":
         reponse = {"autorise": False, "motif": "carte_inactive"}
@@ -90,7 +102,7 @@ async def scan(data: Scan):
             "nom": carte["nom"],
             "prenom": carte["prenom"],
             "niveau": carte["niveau"],
-            "porte": porte["nom"],
+            "porte": lieu or porte["nom"],
         }
 
     # On prévient la webapp en temps réel
@@ -98,7 +110,8 @@ async def scan(data: Scan):
         "heure": datetime.now().strftime("%H:%M:%S"),
         "uid": uid,
         "porte_id": porte["id"],
-        "porte": porte["nom"],
+        "porte": lieu or porte["nom"],
+        "id_user": carte["id_user"] if carte else None,
         "nom": carte["nom"] if carte else None,
         "prenom": carte["prenom"] if carte else None,
         "autorise": reponse["autorise"],
@@ -151,22 +164,26 @@ def creer_user(data: NouvelUtilisateur):
 
 @app.post("/api/cartes")
 def creer_carte(data: NouvelleCarte):
-    if not 1 <= data.niveau <= 3:
-        raise HTTPException(400, "Le niveau doit être entre 1 et 3")
+    uid = data.uid.strip().upper()
+    if not uid or any(caractere not in "0123456789ABCDEF" for caractere in uid):
+        raise HTTPException(400, "L'UID doit contenir uniquement des caractères hexadécimaux")
+    if not 0 <= data.niveau <= 3:
+        raise HTTPException(400, "Le niveau doit être entre 0 et 3")
     try:
         ecrire(
             "INSERT INTO carte (uid, niveau, statut, id_user) VALUES (%s, %s, 'active', %s)",
-            (data.uid.strip().upper(), data.niveau, data.id_user),
+            (uid, data.niveau, data.id_user),
         )
     except mysql.connector.IntegrityError:
         raise HTTPException(409, "Cette carte existe déjà ou l'utilisateur est inconnu")
-    return {"uid": data.uid.strip().upper()}
+    return {"uid": uid}
 
 
 @app.patch("/api/cartes/{uid}")
 def changer_statut(uid: str, data: StatutCarte):
     if data.statut not in ("active", "inactive"):
         raise HTTPException(400, "Statut invalide")
+    uid = uid.strip().upper()
     ecrire("UPDATE carte SET statut = %s WHERE uid = %s", (data.statut, uid))
     return {"uid": uid, "statut": data.statut}
 
@@ -188,3 +205,6 @@ async def websocket(ws: WebSocket):
 @app.get("/")
 def page_accueil():
     return FileResponse(Path(__file__).parent / "static" / "index.html")
+
+
+app.mount("/", StaticFiles(directory=Path(__file__).parent / "static"), name="static")

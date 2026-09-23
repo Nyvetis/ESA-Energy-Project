@@ -6,6 +6,7 @@ CONFIG = {
     "user": "workshop",
     "password": "mdp",
     "database": "vaisseau_db",
+    "charset": "utf8mb4",
 }
 
 
