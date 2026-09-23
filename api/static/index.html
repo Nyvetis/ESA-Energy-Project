@@ -50,6 +50,26 @@
   .porte.refusee { border-color: var(--ko); background: #F8E6E4; }
   .porte.refusee .numero, .porte.refusee .message { color: var(--ko); }
 
+  /* ---- Poste de vérification : caméra + demandes ---- */
+  .verification { display: grid; grid-template-columns: 3fr 2fr; gap: 16px; margin-bottom: 24px; }
+  @media (max-width: 800px) { .verification { grid-template-columns: 1fr; } }
+  .camera { position: relative; background: var(--encre); border-radius: 6px; overflow: hidden; aspect-ratio: 4 / 3; }
+  .camera img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .camera .hors-ligne { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    text-align: center; padding: 20px; color: var(--coque); }
+  .camera .direct { position: absolute; top: 12px; left: 12px; padding: 2px 10px; border-radius: 4px;
+    background: var(--ko); color: #fff; font: 700 .9rem var(--titre); }
+  .demandes { display: flex; flex-direction: column; gap: 12px; }
+  .demande { border: 3px solid var(--accent); border-radius: 6px; padding: 14px; background: #fff; }
+  .demande .qui { font: 700 1.3rem/1.2 var(--titre); }
+  .demande .details { color: var(--gris); font-size: .95rem; }
+  .demande .choix { display: flex; gap: 10px; }
+  .demande .choix button { flex: 1; margin-top: 12px; }
+  button.valider { background: var(--ok); }
+  button.refuser { background: var(--ko); }
+  .porte.attente { border-color: var(--accent); }
+  .porte.attente .numero, .porte.attente .message { color: var(--accent); }
+
   /* ---- Colonnes ---- */
   .colonnes { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 32px; }
   @media (max-width: 800px) { .colonnes { grid-template-columns: 1fr; } }
@@ -78,6 +98,7 @@
   th { font: 700 1.05rem var(--titre); color: var(--gris); }
   td.uid { font-variant-numeric: tabular-nums; letter-spacing: .05em; }
   .inactive { color: var(--ko); }
+  .niveau-carte { width: auto; padding: 4px 8px; }
 
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
@@ -88,6 +109,18 @@
     <h1>Yggdrasil — contrôle d'accès</h1>
     <span id="liaison" class="liaison">Liaison avec le serveur de bord…</span>
   </header>
+
+  <div class="verification">
+    <section class="camera" aria-label="Caméra du poste de commande">
+      <img id="camera" alt="Vidéo en direct de la caméra">
+      <span class="direct" id="camera-direct" hidden>En direct</span>
+      <p class="hors-ligne" id="camera-hors-ligne">Caméra injoignable. Vérifiez que l'ESP32-S3-CAM est allumé et que CAMERA_URL contient la bonne adresse.</p>
+    </section>
+    <section class="bloc">
+      <h2>Identités à confirmer</h2>
+      <div class="demandes" id="demandes"><p class="vide">Aucune demande. Elles apparaissent ici quand un badge est passé au poste de commande.</p></div>
+    </section>
+  </div>
 
   <section class="portes" id="portes" aria-label="Portes du vaisseau"></section>
 
@@ -153,11 +186,16 @@
 </main>
 
 <script>
+// Adresse du flux vidéo de l'ESP32-S3-CAM (à adapter)
+const CAMERA_URL = "http://10.151.37.30:81/stream";
+
 // Traduction des motifs de refus renvoyés par l'API
 const MOTIFS = {
   carte_inconnue: "Carte inconnue",
   carte_inactive: "Carte désactivée",
   niveau_insuffisant: "Niveau insuffisant",
+  refuse_operateur: "Refusé par l'opérateur",
+  delai_depasse: "Délai de validation dépassé",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -200,7 +238,12 @@ function afficherCartes(cartes) {
       <tr>
         <td class="uid">${esc(c.uid)}</td>
         <td>${esc(c.prenom)} ${esc(c.nom)}</td>
-        <td>${c.niveau}</td>
+        <td>
+          <select class="niveau-carte" aria-label="Niveau de la carte ${esc(c.uid)}"
+                  onchange="changerNiveau('${esc(c.uid)}', this.value)">
+            ${[1, 2, 3].map((n) => `<option value="${n}" ${n === c.niveau ? "selected" : ""}>${n}</option>`).join("")}
+          </select>
+        </td>
         <td class="${c.statut === "active" ? "" : "inactive"}">${c.statut === "active" ? "Active" : "Désactivée"}</td>
         <td><button class="secondaire" onclick="basculerCarte('${esc(c.uid)}', '${c.statut}')">
           ${c.statut === "active" ? "Désactiver" : "Réactiver"}</button></td>
@@ -232,7 +275,7 @@ function ajouterAuFlux(ev) {
 function animerPorte(ev) {
   const porte = $(`porte-${ev.porte_id}`);
   if (!porte) return;
-  porte.classList.remove("ouverte", "refusee");
+  porte.classList.remove("ouverte", "refusee", "attente");
   porte.classList.add(ev.autorise ? "ouverte" : "refusee");
   porte.querySelector(".message").textContent = ev.autorise
     ? `Bienvenue ${ev.prenom} ${ev.nom}`
@@ -244,6 +287,69 @@ function animerPorte(ev) {
   }, 3000);
 }
 
+// ---------------- Validation manuelle ----------------
+function afficherDemande(d) {
+  const liste = $("demandes");
+  liste.querySelector(".vide")?.remove();
+  const bloc = document.createElement("article");
+  bloc.className = "demande";
+  bloc.id = `demande-${d.id}`;
+  bloc.innerHTML = `
+    <span class="qui">${esc(d.prenom)} ${esc(d.nom)}</span>
+    <p class="details">${esc(d.porte)} · carte ${esc(d.uid)} · niveau ${d.niveau} · ${d.heure}</p>
+    <p class="details">Comparez le visage à la caméra avant de décider.
+      Refus automatique dans <strong class="compte">${d.restant}</strong> s.</p>
+    <div class="choix">
+      <button class="valider" onclick="decider(${d.id}, true)">Valider</button>
+      <button class="refuser" onclick="decider(${d.id}, false)">Refuser</button>
+    </div>`;
+  liste.append(bloc);
+
+  // Compte à rebours affiché (le refus automatique est décidé par l'API)
+  let restant = d.restant;
+  bloc.minuteur = setInterval(() => {
+    restant = Math.max(0, restant - 1);
+    bloc.querySelector(".compte").textContent = restant;
+  }, 1000);
+
+  // La porte concernée passe en attente
+  const porte = $(`porte-${d.porte_id}`);
+  if (porte) {
+    clearTimeout(porte.minuteur);
+    porte.classList.remove("ouverte", "refusee");
+    porte.classList.add("attente");
+    porte.querySelector(".message").textContent = `En attente : ${d.prenom} ${d.nom}`;
+  }
+}
+
+function retirerDemande(id) {
+  const bloc = $(`demande-${id}`);
+  if (bloc) { clearInterval(bloc.minuteur); bloc.remove(); }
+  if (!$("demandes").children.length) {
+    $("demandes").innerHTML = `<p class="vide">Aucune demande. Elles apparaissent ici quand un badge est passé au poste de commande.</p>`;
+  }
+}
+
+async function decider(id, valide) {
+  try {
+    await api(`/api/demandes/${id}/decision`, { method: "POST", body: JSON.stringify({ valide }) });
+  } catch (e) {
+    retirerDemande(id);  // déjà traitée ailleurs
+  }
+}
+
+// ---------------- Caméra ----------------
+function demarrerCamera() {
+  const img = $("camera");
+  img.onload = () => { $("camera-hors-ligne").hidden = true; $("camera-direct").hidden = false; };
+  img.onerror = () => {
+    $("camera-hors-ligne").hidden = false;
+    $("camera-direct").hidden = true;
+    setTimeout(() => { img.src = `${CAMERA_URL}?t=${Date.now()}`; }, 5000);  // nouvel essai
+  };
+  img.src = CAMERA_URL;
+}
+
 // Une carte inconnue a été scannée : on prépare son enregistrement
 function proposerNouvelleCarte(uid) {
   $("carte-uid").value = uid;
@@ -253,13 +359,14 @@ function proposerNouvelleCarte(uid) {
 
 // ---------------- Chargement des données ----------------
 async function charger() {
-  const [portes, cartes, users, historique] = await Promise.all([
-    api("/api/portes"), api("/api/cartes"), api("/api/users"), api("/api/historique"),
+  const [portes, cartes, users, historique, enAttente] = await Promise.all([
+    api("/api/portes"), api("/api/cartes"), api("/api/users"), api("/api/historique"), api("/api/demandes"),
   ]);
   afficherPortes(portes);
   afficherCartes(cartes);
   afficherUsers(users);
   historique.slice().reverse().forEach(ajouterAuFlux);
+  enAttente.forEach(afficherDemande);
 }
 
 async function rechargerCartes() {
@@ -277,6 +384,8 @@ function connecter() {
   };
   ws.onmessage = (message) => {
     const ev = JSON.parse(message.data);
+    if (ev.type === "validation") return afficherDemande(ev);
+    if (ev.type === "validation_traitee") return retirerDemande(ev.id);
     ajouterAuFlux(ev);
     animerPorte(ev);
     if (ev.motif === "carte_inconnue") proposerNouvelleCarte(ev.uid);
@@ -321,6 +430,15 @@ $("btn-user").onclick = async () => {
   afficherUsers(await api("/api/users"));
 };
 
+// Changer le niveau d'une carte directement depuis le tableau
+async function changerNiveau(uid, niveau) {
+  await api(`/api/cartes/${uid}`, {
+    method: "PATCH",
+    body: JSON.stringify({ niveau: Number(niveau) }),
+  });
+  rechargerCartes();
+}
+
 async function basculerCarte(uid, statut) {
   await api(`/api/cartes/${uid}`, {
     method: "PATCH",
@@ -331,6 +449,7 @@ async function basculerCarte(uid, statut) {
 
 charger();
 connecter();
+demarrerCamera();
 </script>
 </body>
 </html>
